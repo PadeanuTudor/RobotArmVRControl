@@ -1,95 +1,117 @@
-# ProjectComp — Robotic Arm + ZED Point Cloud Visualization
+# VR Robotic Arm Control & ZED Point Cloud Visualization
 
 ## Overview
+This project provides a Unity-based mixed-reality toolkit designed to control and observe a robotic arm's behavior in real time from remote locations. By bridging the physical gap between the robot and the technician, it enables immediate fault assessment using a digital twin and real-time sensor streams without requiring on-site transit.
 
-`ProjectComp` is a Unity-based toolkit for visualizing live ZED stereo camera data and controlling a robotic arm through ROS. It combines a low-latency point cloud renderer and color video feed with ROS bidirectional integration and VR teleoperation support, enabling a seamless mixed-reality workflow for research and prototyping.
+The system combines low-latency point cloud rendering, live stereo video streaming, bidirectional ROS integration, and full VR teleoperation support.
 
-Key capabilities:
-- High-performance live point cloud streaming and rendering from a remote ZED server.
-- Live color video feed (JPEG-over-TCP) for texture-mapped displays.
-- ROS integration via `Unity.Robotics.ROSTCPConnector` to subscribe to joint states and publish joint commands.
-- VR controller teleoperation and a keyboard fallback for commanding joint velocities.
+---
 
-## Highlights / Features
+## Technology Stack
 
-- `ZedPointCloud.cs`: Efficient, threaded TCP client that parses binary point clouds off the main thread, uploads via a single persistent `ComputeBuffer`, and draws with `PointCloudShader.shader`. Handles 100k–300k points at VR frame rates.
-- `ZedColorFeed.cs`: JPEG-over-TCP video client that decodes frames on the main thread and updates a `Texture2D` on a `Renderer`.
-- `RosJointCommandPublisher.cs` / `UrRobotController`: Bridges Unity and ROS by subscribing to `/joint_states` and publishing commands to a configurable controller topic.
-- `VRJoysticks.cs`: Maps Meta Quest controllers (or equivalent XR controllers) to joint velocity commands with deadzone and smoothing.
-- Included shader assets for point rendering and an example material configured to `Cull Off`.
+*   **Game Engine & Environment:** Unity (with Universal Render Pipeline / Built-in Shader Pipeline compatibility)
+*   **Virtual Reality:** Meta XR SDK / OpenXR (optimized for Meta Quest 3 via Air Link)
+*   **Computer Vision & Depth Sensing:** ZED 2i Stereo Camera & ZED SDK
+*   **Robotics Middleware:** ROS (Robot Operating System) via `Unity.Robotics.ROSTCPConnector`
+*   **Graphics & Shading:** Custom HLSL geometry shaders using persistent GPU `ComputeBuffer` allocations
+*   **Programming Languages:** C# (Unity Client) & Python / C++ (Linux Server)
 
-## Architecture
+### 1. Point Cloud Streaming (`ZedPointCloud.cs` & `PointCloudShader.shader`)
+*   Binary point cloud data (containing 3D coordinates and packed BGRA colors) is transmitted over a TCP socket.
+*   Data parsing occurs off the main thread into a double buffer array to prevent VR frame stuttering.
+*   Points are uploaded to GPU memory via a fixed, single persistent `ComputeBuffer`.
+*   A custom geometry shader expands each point into a camera-facing billboard quad, supporting 100,000 to 300,000+ points at full VR frame rates.
 
-- A lightweight Ubuntu-side `zed_server.py` streams two TCP services:
-  - Video JPEG stream (default port `5003`)
-  - Point cloud binary stream (default port `5004`)
-  - HTTP control endpoint (default port `5002`) for runtime settings (e.g. confidence threshold)
+### 2. Video Feed Streaming (`ZedColorFeed.cs`)
+*   JPEG frames are received continuously over TCP.
+*   The main thread decodes the byte array directly into a `Texture2D` assigned to the scene display surface.
 
-- Unity runs three main subsystems:
-  - Network threads for ZED point cloud and color feed (non-Unity APIs only) that hand off parsed frames to the main thread.
-  - Rendering layer using `ComputeBuffer` + GPU shader for efficient point rendering.
-  - ROS bridge and teleoperation components for robot state sync and command publishing.
+### 3. Bidirectional ROS Communication (`RosConnection.cs` & `RosJointCommandPublisher.cs`)
+*   **Robot-to-Unity:** Subscribes to the `/joint_states` ROS topic to receive actual joint angles and mirror them live on the Unity digital twin.
+*   **Unity-to-Robot:** Converts VR controller inputs or position offsets into velocity/position commands published to controller topics (e.g., `/forward_velocity_controller/commands`).
 
-## Quick Start
+---
 
-Prerequisites:
-- Unity Editor (open a compatible Unity project or create a new one and copy the `Assets/` files)
-- A running ZED data server (see `zed_server.py`) on the same LAN or reachable IP
-- (Optional) ROS + `rosbridge`/`ros_tcp_endpoint` and `Unity.Robotics.ROSTCPConnector` for ROS comms
+## Connection & Network Configuration
 
-Unity setup:
-1. Open the project in Unity and add the provided scripts and shaders to a Scene.
-2. Create an empty `GameObject` and attach `ZedPointCloud`:
-   - Assign a Material that uses `PointCloudShader.shader` (ensure `Cull Off` in the Pass block).
-   - Set `Server Ip` to your server (e.g. `192.168.1.130`).
-   - Set `Server Port` to `5004` (point cloud TCP port).
-   - Tune `Max Point Capacity` (default `300000`) to match your expected peak.
-3. Create a Quad (or mesh) and attach `ZedColorFeed`:
-   - Set `Server Ip` and `Server Port` (`5003` by default).
-   - Assign the target `Renderer` (or let the component pick the attached `Renderer`).
-4. For ROS control:
-   - Add `UrRobotController` and populate the `joints` array with the robot's `ArticulationBody` chain.
-   - Configure `jointStateTopic` (default `/joint_states`) and `commandTopic` (default `/forward_position_controller/commands`).
-5. For VR teleop:
-   - Add `VRJoysticks` and assign a `UrVelocityBridge` implementation (bridge publishes velocity commands to ROS).
+### Network Ports
+*   **HTTP Config Port (`5002`):** Handles runtime parameter adjustments (e.g., ZED depth confidence filtering).
+*   **Color Video TCP Port (`5003`):** Streams JPEG image frames.
+*   **Point Cloud TCP Port (`5004`):** Streams raw binary point cloud data.
+*   **ROS TCP Bridge Port (`10000`):** Handles bidirectional ROS message communication.
 
-Running:
-- Start the ZED server on your Ubuntu machine. Ensure the Unity Editor machine can reach the server IP and the configured ports (`5002`, `5003`, `5004`).
-- Enter Play mode in Unity. Monitor the Console for connection logs (`ZedPointCloud: Connected...`, `ZedColorFeed: Connected...`).
-- Use the Inspector `Confidence Threshold` slider to tune depth filtering in real time. The value is pushed to the server via the HTTP endpoint.
+### IP Address Setup
+*   **Server Wired Interface:** `192.168.1.X`
+*   **Server Wireless Interface / Host:** `192.168.1.Y`
 
-VR Controls & Teleop:
-- By default, holding `Space` switches Unity into Command Mode and sends the Unity joint positions to the robot.
-- `VRJoysticks` maps controller axes and buttons to six joint velocity channels. Tune `maxSpeed`, `deadzone`, and `smoothing` in the Inspector.
-- Left/Right sticks and triggers map to specific joints (see `Assets/VRJoysticks.cs` comments for exact mapping).
+> *Note:* If network updates reset the wired IP on the Linux server, re-assign it using:
+> `sudo ip addr add 192.168.1.X/24 dev [eth0]` (replacing `[eth0]` with your wired interface name).
 
-## Networking & Ports
+---
 
-- Point cloud TCP: `5004` (binary format: uint32 length, payload with uint32 N then N * 16 bytes per point)
-- Color video TCP: `5003` (JPEG frames, prefixed by uint32 length)
-- HTTP config: `5002` (GET endpoints for runtime settings, e.g. `/set_confidence?value=XX`)
+## Connection Steps & Operation
 
-Firewall and NAT notes:
-- Ensure the server machine allows incoming TCP connections on the above ports.
-- For multi-machine setups across subnets, confirm routing/firewall rules and use static IPs where possible.
+### 1. Server-Robot Initialization
+1.  Physically connect the ZED 2i camera via a dedicated USB 3.0 port and the robot via the Ethernet interface to the server machine.
+2.  Set the robot's companion tablet to **Local Control Mode**.
+3.  Open a terminal on the server machine and clean up existing sessions:
+    ```bash
+    ./start_robot.sh stop
+    ```
+4.  Run the startup script:
+    ```bash
+    ./start_robot.sh
+    ```
+5.  Confirm that terminal messages state:
+    *   Server started on `192.168.1.Y:10000`
+    *   Camera started successfully
+    *   Robot is accepting commands
+6.  Press the **Play** button on the robot control tablet.
 
-## Troubleshooting
+### 2. VR Client Setup
+1.  Ensure both the VR Host PC and the Meta Quest 3 headset are connected to the same local network.
+2.  Ensure the headset battery level is **above 30%** (lower levels will force Air Link to disconnect).
+3.  In the Quest headset, open **Quick Settings** > **Air Link** and launch the connection to the host PC.
+4.  Launch `RobotVRControl.exe` from the host PC desktop or the VR Library environment. The app will launch in full immersive VR.
 
-- No point cloud frames:
-  - Verify `zed_server.py` is running and bound to the correct IP.
-  - Check Unity Console for connection or read errors from `ZedPointCloud`.
-  - Ensure `maxPointCapacity` is high enough; incoming frames larger than the cap are truncated and logged.
+---
 
-- Video not updating:
-  - Confirm the `targetRenderer` material property name (default `_MainTex`).
-  - Look for `ZedColorFeed` connection logs and JPEG length sanity rejections.
+## VR Control Mapping
 
-- ROS comms not working:
-  - Verify the ROS TCP endpoint and `Unity.Robotics.ROSTCPConnector` configuration.
-  - Ensure topics match and message types are correct.
+The robotic arm is teleoperated using the Meta Quest Touch controllers:
 
-## Project Structure
+| Controller | Control Input | Robot Joint / Motion |
+| :--- | :--- | :--- |
+| **Left Controller** | Stick Left / Right | Elbow Joint |
+| **Left Controller** | Stick Up / Down | Wrist 2 |
+| **Left Controller** | Bumper (LB) | Wrist 1 |
+| **Left Controller** | Trigger (LT) | Wrist 3 (Accessory Rotation) |
+| **Right Controller** | Stick Left / Right | Shoulder Pan |
+| **Right Controller** | Stick Up / Down | Shoulder Lift |
+| **Right Controller** | Trigger (RT) | Wrist 3 (Accessory Rotation) |
 
-- `Assets/` — Unity scripts and shader assets
-  - `ZedPointCloud.cs`, `ZedColorFeed.cs`, `PointCloudShader.shader`
-  - `RosJointCommandPublisher.cs`, `VRJoysticks.cs`, and bridge utilities
+*(Keyboard Fallback: Holding the `Space` key in Unity enables Command Mode, sending Unity joint angles directly to the physical robot.)*
+
+---
+
+## Shutdown Procedure
+
+1.  **Exit Client:** Press `Esc` on the host PC keyboard to close the Unity application, then disconnect Meta Air Link inside the headset dashboard.
+2.  **Stop Server:** Run the termination script on the Linux server terminal to gracefully stop processes and avoid zombie background threads:
+    ```bash
+    ./start_robot.sh stop
+    ```
+
+---
+
+## Core Repository Structure & Scripts
+
+*   `Assets/ZedPointCloud.cs`: Background-threaded TCP client that parses point cloud payloads into double buffers and uploads them to GPU memory.
+*   `Assets/ZedColorFeed.cs`: Handles JPEG image reception and updates the texture on designated scene renderers.
+*   `Assets/PointCloudShader(1).shader`: Custom shader expanding buffer data into screen-aligned billboard quads with soft circular falloff.
+*   `Assets/VRJoysticks.cs`: Translates Meta Quest controller stick and trigger inputs into smoothed joint velocity channels.
+*   `Assets/RosConnection.cs` / `RosJointCommandPublisher.cs`: Manages ROS publisher and subscriber instances for state sync and execution.
+*   `Assets/TelemetryDisplay.cs`: Pushes joint telemetry, tool-center point (TCP) coordinates, and status to a world-space lazy-following HUD.
+
+---
+*License: MIT*
